@@ -39,30 +39,6 @@ bool verifyMagicBytes(File file) {
     return cast(string)file.read(CLIP_MAGIC.length) == CLIP_MAGIC;
 }
 
-bool tryParseChunkDataBlock(ref File file, ref CLIPExtaBlock block) {
-    size_t start = file.tell();
-
-    uint lengthOfData = file.readValue!uint();
-    uint lengthOfName = file.readValue!uint();
-
-    // Not a data block
-    if (file.cursedReadUTF8(lengthOfName) != CHUNK_BEGIN) {
-        file.seek(start);
-        return false;
-    }
-
-    enum LENGTH_OF_END = 84;
-    enum PADDING = 20;
-    block.dataStart = start;
-    block.dataLength = lengthOfData;
-    block.blockData.blockIndex = file.readValue!uint();
-    block.blockData.flags = file.readValue!uint();
-    block.blockData.cDataStart = file.tell()+PADDING;
-    block.blockData.cDataLength = block.dataLength - (8+LENGTH_OF_END+PADDING);
-    file.seek(start+lengthOfData);
-    return true;
-}
-
 void beginParse(ref File file, ref CLIP clip) {
     enforce(file.verifyMagicBytes(), "Invalid magic bytes!");
     clip.fileSize = file.readValue!ulong();
@@ -80,7 +56,6 @@ void beginParse(ref File file, ref CLIP clip) {
                 file.skip(length);
                 break;
             case HEADER_EXTA:
-                CLIPExtaBlock[] blocks;
                 
                 // Exta has extra data, as such we need to shuffle
                 // some things around.
@@ -88,16 +63,9 @@ void beginParse(ref File file, ref CLIP clip) {
                 string id = cast(string)file.read(strlength);
                 ulong datalength = file.readValue!ulong();
                 ulong rstart = file.tell();
-                
-                // Read blocks
-                ulong i = rstart;
-                CLIPExtaBlock block;
-                while(tryParseChunkDataBlock(file, block)) {
-                    blocks ~= block;
-                }
 
                 // Then we can add it.
-                clip.extaSections ~= CLIPExtaSection(rstart, datalength, id, blocks);
+                clip.extaSections ~= CLIPExtaSection(rstart, datalength, id);
                 file.seek(rstart+datalength);
                 break;
             case HEADER_SQLI:

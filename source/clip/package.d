@@ -18,20 +18,6 @@ struct CLIPExtaSection {
     size_t sectionStart;
     size_t sectionLength;
     string id;
-    CLIPExtaBlock[] blocks;
-}
-
-/**
-    A CLIP Exta block
-*/
-struct CLIPExtaBlock {
-    size_t dataStart;
-    size_t dataLength;
-
-    union {
-        CLIPExtaBlockData blockData;
-        ubyte[] statusOrChecksum;
-    }
 }
 
 /**
@@ -111,23 +97,5 @@ public:
             cast(int)extaSections.length,
             cast(int)sqliteSections.length
         );
-    }
-
-    void writeChunksToFiles() {
-        import std.file : write, mkdirRecurse, exists;
-        import std.path : buildPath;
-        if (!exists("TEST")) mkdirRecurse("TEST");
-
-
-        foreach(section; extaSections) {
-            string extaPath = buildPath("TEST", section.id);
-            if (!exists(extaPath)) mkdirRecurse(extaPath);
-
-            import std.stdio : writefln;
-            foreach(i, block; section.blocks) {
-                writefln("Decompressing %s... (%s..%s)", section.id, section.sectionStart, section.sectionLength);
-                write(buildPath(extaPath, "%s.bin".format(block.blockData.blockIndex)), decompressExtaBlock(file, block.blockData));
-            }
-        }
     }
 }
