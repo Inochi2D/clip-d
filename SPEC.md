@@ -6,7 +6,7 @@ from the software.
 The CLIP format encodes numeric values in big endian format.
 
 ## Chunks
-A CLIP file is split up in to multiple chunks, each chunk being 8 bytes long.
+A CLIP file is split up in to multiple chunks, each chunk has a header that is 8 bytes long.
 
 A file always starts with the `CSFCHUNK` chunk, followed by 8 bytes of file length, then 8 bytes of offset info in big endian format.
 
