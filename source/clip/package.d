@@ -20,17 +20,6 @@ struct CLIPExtaSection {
     string id;
 }
 
-/**
-    Information about a CLIP Exta block with data 
-*/
-struct CLIPExtaBlockData {
-    uint blockIndex;
-    uint flags;
-
-    size_t cDataStart;
-    size_t cDataLength;
-}
-
 struct CLIPStats {
     int headSections;
     int extaSections;

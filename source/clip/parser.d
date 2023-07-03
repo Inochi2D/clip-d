@@ -77,10 +77,3 @@ void beginParse(ref File file, ref CLIP clip) {
         }
     }
 }
-
-ubyte[] decompressExtaBlock(File file, CLIPExtaBlockData block) {
-    import std.zlib;
-    file.seek(block.cDataStart, SEEK_SET);
-    // return file.read(block.cDataLength); //cast(ubyte[])uncompress();
-    return cast(ubyte[])uncompress(file.read(block.cDataLength));
-}
