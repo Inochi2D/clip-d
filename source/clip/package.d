@@ -1,7 +1,8 @@
 module clip;
-import std.stdio : File;
-import std.format;
+import clip.db;
 import clip.parser;
+import std.format;
+import std.stdio;
 
 /**
     A CLIP section
@@ -47,6 +48,8 @@ package(clip):
 
     size_t footerOffset;
 
+    CLIPDatabase db;
+
 public:
 
     /**
@@ -75,6 +78,19 @@ public:
     */
     void parse() {
         beginParse(file, this);
+
+        db = new CLIPDatabase(this);
+
+        auto canvas = db.getOne("Canvas");
+
+        writeln(getCanvasDimensions(canvas));
+
+        auto rootFolderIndex = canvas["CanvasRootFolder"].get!(long);
+        writeln(rootFolderIndex);
+        auto rootFolder = db.getOne("Layer", "MainId", rootFolderIndex);
+        writeln(rootFolder);
+        auto firstChildIndex = rootFolder["LayerFirstChildIndex"].get!(long);
+        walkLayersInFolder(this, firstChildIndex);
     }
 
     /**
