@@ -22,6 +22,14 @@ ubyte[] read(ref File file, size_t length) {
 }
 
 /**
+    Reads values
+*/
+ubyte[] readAt(ref File file, size_t offset, size_t length) {
+    file.seek(offset, SEEK_SET);
+    return file.rawRead(new ubyte[length]);
+}
+
+/**
     Peeks values
 */
 ubyte[] peek(ref File file, ptrdiff_t length) {
