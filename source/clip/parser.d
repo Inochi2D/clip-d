@@ -89,6 +89,7 @@ void parseChunks(ref File file, ref CLIP clip) {
                 break;
 
             case HEADER_FOOT:
+                writeln(clip.extaSections);
                 return;
 
             default:
@@ -201,10 +202,14 @@ ubyte[] renderLayer(ref File file, ref CLIP clip, long mipmapIndex) {
     writeln(attrib);
 
     string externalId = cast(string)offscreen["BlockData"].get!(ubyte[]);
-    CLIPExtaSection sectionInfo = clip.getExternalById(externalId);
-    CLIPExtaData data = parseExtaSection(file, clip, sectionInfo);
+    Nullable!CLIPExtaSection sectionInfo = clip.getExternalById(externalId);
+    if (sectionInfo.isNull) {
+        return null;
+    }
 
-    writeln("chnk start:", sectionInfo.sectionStart);
+    CLIPExtaData data = parseExtaSection(file, clip, sectionInfo.get);
+
+    writeln("chnk start:", sectionInfo.get.sectionStart);
 
     uint width = attrib.parameters[0];
     uint height = attrib.parameters[1];

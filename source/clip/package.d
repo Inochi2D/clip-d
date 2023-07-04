@@ -5,6 +5,7 @@ import std.algorithm.searching;
 import std.exception;
 import std.format;
 import std.stdio;
+import std.typecons;
 
 /**
     A CLIP section
@@ -56,10 +57,9 @@ package(clip):
 
     CLIPDatabase db;
 
-    CLIPExtaSection getExternalById(string id) {
+    Nullable!CLIPExtaSection getExternalById(string id) {
         CLIPExtaSection[] result = extaSections.find!((x) => x.id == id)();
-        enforce(result.length > 0);
-        return result[0];
+        return result.length > 0 ? nullable(result[0]) : Nullable!CLIPExtaSection.init;
     }
 
 public:
