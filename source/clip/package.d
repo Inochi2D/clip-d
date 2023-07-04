@@ -1,6 +1,8 @@
 module clip;
 import clip.db;
 import clip.parser;
+import std.algorithm.searching;
+import std.exception;
 import std.format;
 import std.stdio;
 
@@ -19,6 +21,10 @@ struct CLIPExtaSection {
     size_t sectionStart;
     size_t sectionLength;
     string id;
+}
+
+struct CLIPExtaData {
+    ubyte[][] data;
 }
 
 struct CLIPStats {
@@ -50,6 +56,12 @@ package(clip):
 
     CLIPDatabase db;
 
+    CLIPExtaSection getExternalById(string id) {
+        CLIPExtaSection[] result = extaSections.find!((x) => x.id == id)();
+        enforce(result.length > 0);
+        return result[0];
+    }
+
 public:
 
     /**
@@ -77,7 +89,7 @@ public:
         Parses the file
     */
     void parse() {
-        beginParse(file, this);
+        parseChunks(file, this);
 
         db = new CLIPDatabase(this);
 
@@ -90,7 +102,7 @@ public:
         auto rootFolder = db.getOne("Layer", "MainId", rootFolderIndex);
         writeln(rootFolder);
         auto firstChildIndex = rootFolder["LayerFirstChildIndex"].get!(long);
-        walkLayersInFolder(this, firstChildIndex);
+        walkLayersInFolder(file, this, firstChildIndex);
     }
 
     /**

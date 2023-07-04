@@ -13,6 +13,13 @@ T readValue(T)(ref File file) {
     return value;
 }
 
+/**
+    Reads file value in little endian fashion
+*/
+T readValueLittleEndian(T)(ref File file) {
+    T value = littleEndianToNative!T(file.rawRead(new ubyte[T.sizeof])[0 .. T.sizeof]);
+    return value;
+}
 
 /**
     Reads values
@@ -48,7 +55,9 @@ void skip(ref File file, ptrdiff_t length) {
 /**
     Cursed reading function
 */
-string cursedReadUTF8(ref File file, size_t length) {
+string cursedReadUTF16(ref File file) {
+    uint length = file.readValue!uint();
+
     // This is beyond cursed, the UTF16 format here is doing funky stuff
     // this is ugly *but it works*
     string fBlockType = cast(string)file.read(length*2);

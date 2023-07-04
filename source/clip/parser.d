@@ -2,10 +2,14 @@ module clip.parser;
 import clip;
 import clip.db;
 import clip.utils.io;
+import std.bitmanip;
+import std.conv;
 import std.exception;
+static import std.file;
 import std.math.rounding;
 import std.utf : toUTF8;
 import std.typecons;
+import std.zlib;
 
 /// CLIP Magic Bytes
 enum CLIP_MAGIC = "CSFCHUNK";
@@ -34,6 +38,13 @@ enum CHUNK_STATUS = "BlockStatus";
 /// Checksum of an Exta Chunk
 enum CHUNK_CHECK = "BlockCheckSum";
 
+struct Rect {
+    int x;
+    int y;
+    int width;
+    int height;
+};
+
 /**
     Verifies the initial magic bytes of the file
 */
@@ -42,22 +53,22 @@ bool verifyMagicBytes(File file) {
     return cast(string)file.read(CLIP_MAGIC.length) == CLIP_MAGIC;
 }
 
-void beginParse(ref File file, ref CLIP clip) {
+void parseChunks(ref File file, ref CLIP clip) {
     enforce(file.verifyMagicBytes(), "Invalid magic bytes!");
     clip.fileSize = file.readValue!ulong();
     clip.fileStartOffset = file.readValue!ulong();
 
-    mloop: while(true) {
+    while(true) {
         string hdr = cast(string)file.read(8);
         ulong length = file.readValue!ulong();
         ulong start = file.tell();
-
 
         switch(hdr) {
             case HEADER_HEAD:
                 clip.headSections ~= CLIPSection(start, length);
                 file.skip(length);
                 break;
+
             case HEADER_EXTA:
                 
                 // Exta has extra data, as such we need to shuffle
@@ -71,12 +82,17 @@ void beginParse(ref File file, ref CLIP clip) {
                 clip.extaSections ~= CLIPExtaSection(rstart, datalength, id);
                 file.seek(rstart+datalength);
                 break;
+
             case HEADER_SQLI:
                 clip.sqliteSections ~= CLIPSection(start, length);
                 file.skip(length);
                 break;
 
-            default: break mloop;
+            case HEADER_FOOT:
+                return;
+
+            default:
+                enforce(false, "Invalid chunk");
         }
     }
 }
@@ -121,7 +137,7 @@ Tuple!(long, long) getCanvasDimensions(Row canvas) {
     return tuple(w, h);
 }
 
-void walkLayersInFolder(ref CLIP clip, long childIndex) {
+void walkLayersInFolder(ref File file, ref CLIP clip, long childIndex) {
     while (childIndex != 0) {
         auto layer = clip.db.getOne("Layer", "MainId", childIndex);
         auto layertype = layer["LayerType"].get!(long);
@@ -140,9 +156,194 @@ void walkLayersInFolder(ref CLIP clip, long childIndex) {
         }
 
         if (isfolder != 0) {
-            walkLayersInFolder(clip, layer["LayerFirstChildIndex"].get!(long));
+            walkLayersInFolder(file, clip, layer["LayerFirstChildIndex"].get!(long));
+        } else {
+            auto mipmapId = layer["LayerRenderMipmap"].get!(long);
+            ubyte[] rgba = renderLayer(file, clip, mipmapId);
+            std.file.write("layer"~to!string(childIndex)~".data", rgba);
         }
 
         childIndex = layer["LayerNextIndex"].get!(long);
     }
+}
+
+void copy(ref ubyte[] dest, Rect destrect, ubyte[] src, Rect insertrect) {
+    foreach (y; 0..insertrect.height) {
+        if (y + insertrect.y < destrect.y || y + insertrect.y >= destrect.y + destrect.height) {
+            continue;
+        }
+
+        foreach (x; 0..insertrect.width) {
+            if (x + insertrect.x < destrect.x || x + insertrect.x >= destrect.x + destrect.width) {
+                break;
+            }
+
+            size_t truex = insertrect.x - destrect.x + x;
+            size_t truey = insertrect.y - destrect.y + y;
+            size_t desti = truey * destrect.width + truex;
+            size_t srci = y * insertrect.width + x;
+
+            dest[desti * 4 + 0] = src[srci * 4 + 0];
+            dest[desti * 4 + 1] = src[srci * 4 + 1];
+            dest[desti * 4 + 2] = src[srci * 4 + 2];
+            dest[desti * 4 + 3] = src[srci * 4 + 3];
+        }
+    }
+}
+
+ubyte[] renderLayer(ref File file, ref CLIP clip, long mipmapIndex) {
+    auto mipmap = clip.db.getOne("Mipmap", "MainId", mipmapIndex);
+    auto mipmapInfo = clip.db.getOne("MipmapInfo", "MainId", mipmap["BaseMipmapInfo"].get!(long));
+    auto offscreen = clip.db.getOne("Offscreen", "MainId", mipmapInfo["Offscreen"].get!(long));
+
+    Attribute attrib = parseAttribute(offscreen["Attribute"].get!(ubyte[]));
+
+    writeln(attrib);
+
+    string externalId = cast(string)offscreen["BlockData"].get!(ubyte[]);
+    CLIPExtaSection sectionInfo = clip.getExternalById(externalId);
+    CLIPExtaData data = parseExtaSection(file, clip, sectionInfo);
+
+    writeln("chnk start:", sectionInfo.sectionStart);
+
+    uint width = attrib.parameters[0];
+    uint height = attrib.parameters[1];
+    uint tileW = attrib.parameters[2];
+    uint tileH = attrib.parameters[3];
+    uint format1 = attrib.parameters[5];
+    uint format2 = attrib.parameters[6];
+
+    ubyte[] rgba = new ubyte[width * height * 4];
+    Rect rgbaRect = Rect(0, 0, width, height);
+
+    foreach (tiley; 0..tileH) {
+        foreach (tilex; 0..tileW) {
+            uint tileindex = tiley * tileW + tilex;
+            ubyte[] compressedtiledata = data.data[tileindex];
+
+            if (compressedtiledata.length == 0) {
+                continue;
+            }
+
+            ubyte[] rawtiledata = cast(ubyte[])uncompress(compressedtiledata);
+            ubyte[] tile = new ubyte[256 * 256 * 4];
+            Rect tileRect = Rect(tilex * 256, tiley * 256, 256, 256);
+
+            if (format1 == 1 && format2 == 4) {
+                foreach (i; 0..256*256) {
+                    tile[i * 4 + 0] = rawtiledata[65536 + i * 4 + 2];
+                    tile[i * 4 + 1] = rawtiledata[65536 + i * 4 + 1];
+                    tile[i * 4 + 2] = rawtiledata[65536 + i * 4 + 0];
+                    tile[i * 4 + 3] = rawtiledata[i];
+                }
+                copy(rgba, rgbaRect, tile, tileRect);
+            } else {
+                writeln("currently unsupported format for layer");
+            }
+        }
+    }
+
+    return rgba;
+}
+
+CLIPExtaData parseExtaSection(ref File file, ref CLIP clip, CLIPExtaSection sectionInfo) {
+    CLIPExtaData result;
+
+    const size_t endOffset = sectionInfo.sectionStart + sectionInfo.sectionLength;
+
+    uint expectedIndex = 0;
+
+    file.seek(sectionInfo.sectionStart);
+    while (file.tell() < endOffset) {
+        uint chunkLen = file.readValue!uint();
+
+        if (chunkLen < 38) {
+            file.skip(-4);
+            enforce(file.cursedReadUTF16() == CHUNK_STATUS);
+            file.skip(4);
+            uint skip11 = file.readValue!uint();
+            uint skip12 = file.readValue!uint();
+            file.skip(skip11 * skip12);
+            enforce(file.cursedReadUTF16() == CHUNK_CHECK);
+            file.skip(4);
+            uint skip21 = file.readValue!uint();
+            uint skip22 = file.readValue!uint();
+            file.skip(skip21 * skip22);
+        } else {
+            enforce(file.cursedReadUTF16() == CHUNK_BEGIN);
+
+            uint index = file.readValue!uint();
+            enforce(index == expectedIndex);
+            expectedIndex++;
+
+            file.skip(12);
+            if (file.readValue!uint() == 1) {
+                uint datasize = file.readValue!uint();
+                uint datasize2 = file.readValueLittleEndian!uint();
+                assert(datasize == datasize2 + 4);
+                ubyte[] data = file.read(datasize2);
+                result.data ~= data;
+            } else {
+                ubyte[] data = new ubyte[0];
+                result.data ~= data;
+            }
+            enforce(file.cursedReadUTF16() == CHUNK_END);
+        }
+    }
+    enforce(file.tell() == endOffset);
+
+    return result;
+}
+
+struct Attribute {
+    uint[] parameters;
+    uint[] colors;
+}
+
+Attribute parseAttribute(ubyte[] raw) {
+    Attribute result;
+    int readIndex = 0;
+
+    uint read() {
+        enforce(readIndex + uint.sizeof <= raw.length);
+
+        uint result = bigEndianToNative!uint(raw[readIndex..$][0..uint.sizeof]);
+        readIndex += uint.sizeof;
+        return result;
+    }
+
+    string readStr() {
+        uint length = read();
+        enforce(readIndex + length * 2 <= raw.length);
+
+        char[] result;
+        // TODO: proper BE UTF8 decoding
+        foreach (ix; 0..length) {
+            result ~= raw[readIndex + 1];
+            readIndex += 2;
+        }
+        return cast(string)result;
+    }
+
+    uint headerLength = read();
+    enforce(headerLength == 16);
+
+    uint paramsLength = read();
+    uint colorsLength = read();
+    uint trailLength = read();
+    enforce(headerLength + paramsLength + colorsLength + trailLength == raw.length);
+
+    enforce(readStr() == "Parameter");
+    while (readIndex < headerLength + paramsLength) {
+        result.parameters ~= read();
+    }
+    enforce(readIndex == headerLength + paramsLength);
+
+    enforce(readStr() == "InitColor");
+    while (readIndex < headerLength + paramsLength + colorsLength) {
+        result.colors ~= read();
+    }
+    enforce(readIndex == headerLength + paramsLength + colorsLength);
+
+    return result;
 }
